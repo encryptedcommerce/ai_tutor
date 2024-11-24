@@ -1,0 +1,11 @@
+The e-learning-with-llama-tutorial.mdx file has instructions for writing a POC auto content generator for Google Classroom using llama. I want to extend this concept to do the following:
+1. create a curriculumn plan as a 3-level hierarchy of modules, sessions, and sections (each session should be able to be completed in 10-15 minutes).
+2. generate instructional content (text with references to other materials and media), and diagrams (mermaid code that will then be processed to create a PNG to show the student at the beginning and end of a session),
+3. generate assessments with multiple-choice questions and free-form entry questions, for each session and also for each cumulative module.
+4. deliver the course, by allowing the student to advance through the first session contents (diagram, text, diagram again), and assessment. If "mastery" at a 90% proficiency or above is not attained, new content and assessments will be generated to address deficiencies before moving on to the next session. This will also happen at the module level.
+
+I have relevant prompts to be used with the LLM in the prompts.json file.
+
+In contrast to the POC tutorial, I want to use React with Tailwind for the front-end and FastAPI for the backend. Also, I would like to use the LangGraph framework to orchestrate the needed tasks.
+
+UI: The student enters in the TOPIC in a text input field, the language from a dropdown with options "English", "Español", and "Português", and a button to create the lesson plan and begin delivering the course.
