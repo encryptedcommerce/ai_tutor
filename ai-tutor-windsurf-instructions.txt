@@ -6,6 +6,6 @@ The e-learning-with-llama-tutorial.mdx file has instructions for writing a POC a
 
 I have relevant prompts to be used with the LLM in the prompts.json file.
 
-In contrast to the POC tutorial, I want to use React with Tailwind for the front-end and FastAPI for the backend. Also, I would like to use the LangGraph framework to orchestrate the needed tasks.
+In contrast to the POC tutorial, I want to use Gradio. Also, I would like to use the LangGraph framework to orchestrate the needed tasks, using Ollama for inference via the ChatOllama chat model with Llama 3.2..
 
 UI: The student enters in the TOPIC in a text input field, the language from a dropdown with options "English", "Español", and "Português", and a button to create the lesson plan and begin delivering the course.

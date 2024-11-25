@@ -1,0 +1,12 @@
+gradio
+langchain
+langchain-core
+langchain-community
+langgraph
+pydantic
+aiohttp==3.9.3
+fastapi==0.110.0
+uvicorn==0.27.1
+ollama==0.1.7
+python-dotenv==1.0.1
+mermaid-py==0.1.1
