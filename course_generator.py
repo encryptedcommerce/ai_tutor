@@ -2,7 +2,7 @@ import json
 import logging
 import os
 import re
-from typing import Dict, List, TypedDict, Annotated, Optional, Union, AsyncIterator, Any
+from typing import Dict, List, TypedDict, Annotated, Optional, Union, AsyncIterator, Any, AsyncGenerator
 from dotenv import load_dotenv
 from langchain_community.chat_models import ChatOllama
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -898,50 +898,140 @@ workflow.set_finish_point("end")
 # Compile the workflow
 app = workflow.compile()
 
-async def generate_course(topic: str, language: str = "English") -> AsyncIterator[Dict[str, Any]]:
-    """Generate a complete course"""
+async def generate_course(topic: str, language: str = "English") -> AsyncGenerator[Dict[str, Any], None]:
+    """Generate a course with proper structure validation"""
     try:
-        # Initialize course state
-        course_state = {
+        logger.info("Creating course outline...")
+        yield {"status": "📚 Creating course outline...", "progress": 10}
+        
+        # Generate initial outline
+        outline = await generate_course_outline(topic, language)
+        
+        # Initialize course structure
+        course = {
             "topic": topic,
             "language": language,
-            "modules": [],
-            "status": "Starting course generation..."
+            "description": outline.get("description", ""),
+            "prerequisites": outline.get("prerequisites", []),
+            "modules": []
         }
         
-        # Create course outline
-        logger.info("Creating course outline...")
-        yield {"status": "Creating course outline...", "progress": 10}
-        course_outline = await create_course_outline(topic, language)
+        # Generate 2-3 modules
+        module_count = 3
+        module_titles = outline.get("modules", [])[:module_count]
         
-        # Process each module
-        for idx, module in enumerate(course_outline["modules"]):
-            progress = 10 + (80 * (idx / len(course_outline["modules"])))
-            status = f"Generating content for Module {idx + 1}: {module['title']}..."
-            yield {"status": status, "progress": progress}
+        for module_idx in range(module_count):
+            module_title = module_titles[module_idx] if module_idx < len(module_titles) else f"Module {module_idx + 1}"
+            module = {
+                "title": module_title,
+                "description": outline.get("module_descriptions", {}).get(str(module_idx + 1), ""),
+                "sessions": []
+            }
             
-            logger.info(f"Creating content for module {idx + 1}")
+            yield {
+                "status": f"📘 Generating Module {module_idx + 1}: {module_title}",
+                "progress": 20 + (module_idx * 20)
+            }
             
-            # Generate module content
-            module_content = await create_module_content(
-                module_info=module,
-                language=language
-            )
+            # Generate 3-5 sessions per module
+            session_count = 4
+            for session_idx in range(session_count):
+                session_number = f"{module_idx + 1}.{session_idx + 1}"
+                
+                # Generate session content
+                session_content = await create_session_content(session_number, topic, language)
+                session_title = session_content.get("session_name", f"Session {session_number}")
+                
+                session = {
+                    "session_number": session_number,
+                    "title": session_title,
+                    "description": session_content.get("description", ""),
+                    "learning_objectives": session_content.get("learning_objectives", []),
+                    "sections": []
+                }
+                
+                yield {
+                    "status": f"📝 Generating Session {session_number}: {session_title}",
+                    "progress": 40 + int((module_idx * session_count + session_idx) / (module_count * session_count) * 30)
+                }
+                
+                # Add sections from session content
+                sections = session_content.get("sections", [])
+                # Ensure 2-4 sections per session
+                section_count = min(max(2, len(sections)), 4)
+                
+                for section_idx in range(section_count):
+                    section_number = f"{session_number}.{section_idx + 1}"
+                    section_data = sections[section_idx] if section_idx < len(sections) else {}
+                    
+                    # Generate section content if not present
+                    if not section_data.get("section_content"):
+                        section_prompt = f"""Create comprehensive content for section {section_number} of {session_title} about {topic} in {language}.
+                        This section should:
+                        1. Build on previous content
+                        2. Include clear explanations and examples
+                        3. Use markdown formatting for better readability
+                        4. Focus on practical understanding
+                        """
+                        section_content = await generate_section_content(section_prompt)
+                    else:
+                        section_content = section_data["section_content"]
+                    
+                    section_title = section_data.get("section_name", f"Section {section_number}")
+                    section = {
+                        "section_number": section_number,
+                        "title": section_title,
+                        "content": section_content,
+                        "examples": section_data.get("examples", []),
+                        "key_concepts": section_data.get("key_concepts", []),
+                        "references": section_data.get("references", [])
+                    }
+                    session["sections"].append(section)
+                    
+                    yield {
+                        "status": f"✍️ Generating Section {section_number}: {section_title}",
+                        "progress": 70 + int((module_idx * session_count * section_count + session_idx * section_count + section_idx) / (module_count * session_count * section_count) * 20)
+                    }
+                
+                # Generate assessment
+                yield {
+                    "status": f"📋 Creating assessment for Session {session_number}: {session_title}",
+                    "progress": 90 + int((module_idx * session_count + session_idx) / (module_count * session_count) * 10)
+                }
+                
+                session["assessment"] = await generate_session_assessment(
+                    session_number=session_number,
+                    topic=topic,
+                    language=language
+                )
+                
+                module["sessions"].append(session)
             
-            # Add to course state
-            course_state["modules"].append(module_content)
+            course["modules"].append(module)
         
-        # Final yield with complete course state
+        # Validate final course structure
+        if not validate_course_structure(course):
+            logger.error("Course validation failed")
+            yield {
+                "status": "❌ Error: Course validation failed. Please try again.",
+                "progress": 100,
+                "error": "Failed to generate valid course structure"
+            }
+            return
+        
         yield {
-            "status": "Course generation completed!",
+            "status": "✅ Course generation complete!",
             "progress": 100,
-            "course_state": course_state
+            "course_state": course
         }
         
     except Exception as e:
-        logger.error(f"Error generating course: {str(e)}", exc_info=True)
-        yield {"status": f"Error: {str(e)}", "progress": 0, "error": str(e)}
-        raise
+        logger.error(f"Error generating course: {str(e)}")
+        yield {
+            "status": f"❌ Error generating course: {str(e)}",
+            "progress": 100,
+            "error": str(e)
+        }
 
 async def create_course_from_state(state: Dict) -> Dict:
     """Main function to create a course from the current state"""
@@ -999,11 +1089,13 @@ async def create_course_from_state(state: Dict) -> Dict:
                 continue
         
         # Create the final course structure
-        course = Course(
-            topic=state["topic"],
-            language=state["language"],
-            modules=[Module(**module) for module in state["course_plan"].get("modules", [])]
-        )
+        course = {
+            "topic": state["topic"],
+            "language": state["language"],
+            "description": state["course_outline"]["description"],
+            "prerequisites": state["course_outline"]["prerequisites"],
+            "modules": state["course_plan"].get("modules", [])
+        }
         
         return course
         
@@ -1011,46 +1103,268 @@ async def create_course_from_state(state: Dict) -> Dict:
         logger.error(f"Error creating course from state: {str(e)}", exc_info=True)
         raise
 
-def parse_assessment_content(content: str) -> List[Dict]:
-    """Parse the assessment content from LLM response"""
+def parse_assessment_content(content: str) -> Dict[str, Any]:
+    """Parse assessment content from LLM response"""
     try:
         questions = []
-        current_question = None
+        answers = []
         
-        for line in content.split('\n'):
+        # Split content into lines and process each question
+        lines = content.strip().split('\n')
+        current_question = None
+        current_answer = None
+        
+        for line in lines:
             line = line.strip()
             if not line:
                 continue
-            
-            # Check for question number
-            if re.match(r'^[0-9]+[\)\.] ', line):
+                
+            # Check if line starts with a number (new question)
+            if re.match(r'^\d+\.', line):
                 if current_question:
                     questions.append(current_question)
-                current_question = {
-                    'text': line.split(' ', 1)[1].strip(),
-                    'type': 'multiple_choice' if any(c in line.lower() for c in ['a)', 'b)', 'c)', 'd)']) else 'free_form',
-                    'options': [],
-                    'correct_answer': None,
-                    'explanation': None
-                }
-            
-            # Check for options (a, b, c, d)
-            elif current_question and re.match(r'^[a-d][\)\.] ', line.lower()):
-                current_question['options'].append(line.split(' ', 1)[1].strip())
-            
-            # Check for answer/explanation
-            elif current_question and (line.lower().startswith('answer:') or line.lower().startswith('correct:')):
-                current_question['correct_answer'] = line.split(':', 1)[1].strip()
-            elif current_question and line.lower().startswith('explanation:'):
-                current_question['explanation'] = line.split(':', 1)[1].strip()
+                    answers.append(current_answer)
+                current_question = line
+                current_answer = None
+            elif line.lower().startswith(('answer:', 'correct answer:')):
+                current_answer = line.split(':', 1)[1].strip()
         
         # Add the last question
-        if current_question:
+        if current_question and current_answer:
             questions.append(current_question)
+            answers.append(current_answer)
         
-        logger.debug(f"Parsed {len(questions)} questions")
-        return questions
+        return {
+            "questions": questions,
+            "answers": answers
+        }
+    except Exception as e:
+        logger.error(f"Error parsing assessment content: {str(e)}")
+        return {"questions": [], "answers": []}
+
+async def generate_section_content(prompt: str) -> str:
+    """Generate content for a section based on the given prompt"""
+    try:
+        messages = [
+            SystemMessage(content="""You are an expert educator creating focused, practical learning content.
+            Create content that is clear, engaging, and builds understanding step by step.
+            Use markdown formatting for better readability."""),
+            HumanMessage(content=prompt)
+        ]
+        
+        response = await llm.ainvoke(messages)
+        return response.content
+    except Exception as e:
+        logger.error(f"Error generating section content: {str(e)}")
+        return "Content generation failed"
+
+async def generate_session_assessment(session_number: str, topic: str, language: str) -> Dict[str, Any]:
+    """Generate assessment questions for a session"""
+    try:
+        prompt = f"""
+        Create an assessment for Session {session_number} about {topic} in {language}.
+        
+        Create 5 questions that test understanding of the key concepts.
+        Include a mix of:
+        - Multiple choice questions
+        - Short answer questions
+        - Practical application questions
+        
+        For each question, provide:
+        1. The question text
+        2. The correct answer
+        3. Explanation of why it's correct
+
+        Do not include any other content other than the questions and answers.
+        """
+        
+        messages = [
+            SystemMessage(content="""You are an expert in creating effective assessments.
+            Create questions that test both understanding and practical application.
+            Make questions clear and unambiguous."""),
+            HumanMessage(content=prompt)
+        ]
+        
+        response = await llm.ainvoke(messages)
+        assessment = parse_assessment_content(response.content)
+        
+        return {
+            "questions": assessment.get("questions", []),
+            "answers": assessment.get("answers", [])
+        }
+    except Exception as e:
+        logger.error(f"Error generating assessment: {str(e)}")
+        return {"questions": [], "answers": []}
+
+def validate_course_structure(course: Dict[str, Any]) -> bool:
+    """Validate that the course follows the required structure"""
+    try:
+        # Check basic course structure
+        if not isinstance(course, dict):
+            logger.error("Course must be a dictionary")
+            return False
+        
+        if 'modules' not in course:
+            logger.error("Course must have modules")
+            return False
+        
+        modules = course['modules']
+        if not isinstance(modules, list):
+            logger.error("Modules must be a list")
+            return False
+        
+        # Check module count
+        if not (2 <= len(modules) <= 3):
+            logger.error(f"Course must have 2-3 modules, found {len(modules)}")
+            return False
+        
+        # Check each module
+        for i, module in enumerate(modules, 1):
+            if not isinstance(module, dict):
+                logger.error(f"Module {i} must be a dictionary")
+                return False
+            
+            if 'sessions' not in module:
+                logger.error(f"Module {i} must have sessions")
+                return False
+            
+            sessions = module['sessions']
+            if not isinstance(sessions, list):
+                logger.error(f"Sessions in module {i} must be a list")
+                return False
+            
+            # Check session count
+            if not (3 <= len(sessions) <= 5):
+                logger.error(f"Module {i} must have 3-5 sessions, found {len(sessions)}")
+                return False
+            
+            # Check each session
+            for j, session in enumerate(sessions, 1):
+                if not isinstance(session, dict):
+                    logger.error(f"Session {i}.{j} must be a dictionary")
+                    return False
+                
+                if 'sections' not in session:
+                    logger.error(f"Session {i}.{j} must have sections")
+                    return False
+                
+                sections = session['sections']
+                if not isinstance(sections, list):
+                    logger.error(f"Sections in session {i}.{j} must be a list")
+                    return False
+                
+                # Check section count
+                if not (2 <= len(sections) <= 4):
+                    logger.error(f"Session {i}.{j} must have 2-4 sections, found {len(sections)}")
+                    return False
+                
+                # Validate section content
+                for k, section in enumerate(sections, 1):
+                    if not isinstance(section, dict):
+                        logger.error(f"Section {i}.{j}.{k} must be a dictionary")
+                        return False
+                    
+                    if not section.get('section_content'):
+                        logger.error(f"Section {i}.{j}.{k} must have content")
+                        return False
+        
+        return True
+    
+    except Exception as e:
+        logger.error(f"Error validating course structure: {str(e)}")
+        return False
+
+async def generate_course(topic: str, language: str = "English") -> AsyncGenerator[Dict[str, Any], None]:
+    """Generate a course with proper structure validation"""
+    try:
+        logger.info("Creating course outline...")
+        yield {"status": "📚 Creating course outline...", "progress": 10}
+        
+        # Generate course outline
+        course = {
+            "topic": topic,
+            "language": language,
+            "modules": []
+        }
+        
+        # Generate 2-3 modules
+        module_count = 3
+        for module_idx in range(module_count):
+            module = {
+                "title": f"Module {module_idx + 1}",
+                "sessions": []
+            }
+            
+            # Generate 3-5 sessions per module
+            session_count = 4
+            for session_idx in range(session_count):
+                session_number = f"{module_idx + 1}.{session_idx + 1}"
+                session = {
+                    "title": f"Session {session_number}",
+                    "session_number": session_number,
+                    "sections": []
+                }
+                
+                # Generate 2-4 sections per session
+                section_count = 3
+                for section_idx in range(section_count):
+                    section = {
+                        "section_number": f"{session_number}.{section_idx + 1}",
+                        "title": f"Section {session_number}.{section_idx + 1}",
+                        "content": ""
+                    }
+                    session["sections"].append(section)
+                
+                module["sessions"].append(session)
+            
+            course["modules"].append(module)
+            yield {"status": f"Generated module {module_idx + 1} structure", "progress": 20 + (module_idx * 20)}
+        
+        # Generate content for each section
+        total_sections = sum(len(s["sections"]) for m in course["modules"] for s in m["sessions"])
+        current_section = 0
+        
+        for module in course["modules"]:
+            for session in module["sessions"]:
+                for section in session["sections"]:
+                    current_section += 1
+                    progress = 40 + int((current_section / total_sections) * 50)
+                    
+                    yield {
+                        "status": f"Generating content for section {section['section_number']}",
+                        "progress": progress
+                    }
+                    
+                    # Generate section content
+                    section_prompt = f"Generate comprehensive content for section {section['section_number']} about {topic} in {language}."
+                    section["content"] = await generate_section_content(section_prompt)
+                
+                # Generate session assessment
+                session["assessment"] = await generate_session_assessment(
+                    session_number=session["session_number"],
+                    topic=topic,
+                    language=language
+                )
+        
+        # Validate final course structure
+        if not validate_course_structure(course):
+            yield {
+                "status": "Error: Invalid course structure",
+                "progress": 100,
+                "error": "Failed to generate valid course structure"
+            }
+            return
+        
+        yield {
+            "status": "Course generation complete",
+            "progress": 100,
+            "course_state": course
+        }
         
     except Exception as e:
-        logger.error(f"Error parsing assessment content: {str(e)}", exc_info=True)
-        raise
+        logger.error(f"Error generating course: {str(e)}")
+        yield {
+            "status": "Error generating course",
+            "progress": 100,
+            "error": str(e)
+        }

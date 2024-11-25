@@ -3,6 +3,8 @@ import logging
 import gradio as gr
 from typing import Dict, Any, Tuple, AsyncGenerator
 from course_generator import generate_course
+from course_storage import CourseStorage
+from progress_tracker import ProgressTracker
 import json
 
 # Configure logging
@@ -12,251 +14,80 @@ logger = logging.getLogger(__name__)
 class SessionState:
     def __init__(self):
         self.course = None
+        self.course_id = None
         self.current_module_idx = 0
         self.current_session_idx = 0
-        self.current_question_idx = 0
         self.show_assessment = False
+        self.storage = CourseStorage()
+        self.progress = ProgressTracker()
 
 state = SessionState()
 
-async def create_course(topic: str, language: str) -> Tuple[str, str, str, bool, bool]:
-    """Create a new course"""
-    try:
-        status = "Starting course generation..."
-        state.course = await generate_course(topic, language)
-        state.current_module_idx = 0
-        state.current_session_idx = 0
-        state.current_question_idx = 0
-        state.show_assessment = False
-        
-        # Get the first session content
-        if state.course and state.course.get("modules"):
-            current_module = state.course["modules"][state.current_module_idx]
-            if current_module.get("sessions"):
-                current_session = current_module["sessions"][state.current_session_idx]
-                
-                # Format the session content
-                content = f"""# {current_module['title']} - Session {state.current_session_idx + 1}
+def format_session_content(module: Dict[str, Any], session: Dict[str, Any], session_num: int) -> str:
+    """Format session content for display"""
+    return f"""# {module['title']} - Session {session_num}
 
-{current_session.get('title', '')}
+{session.get('title', '')}
 
-{current_session.get('description', '')}
+{session.get('description', '')}
 
 Learning Objectives:
-{chr(10).join('- ' + obj for obj in current_session.get('objectives', []))}
+{chr(10).join('- ' + obj for obj in session.get('objectives', []))}
 
-Duration: {current_session.get('duration', '45 minutes')}
-
-Content:
-{current_session.get('content', '')}
-"""
-                
-                status = f"Course generated successfully: {topic}"
-                return (
-                    status,  # status_output
-                    content,  # course_content
-                    "",      # your_answer
-                    True,    # submit_btn visibility
-                    True     # next_btn visibility
-                )
-        
-        return (
-            "Error: No course content generated",
-            "",
-            "",
-            False,
-            False
-        )
-        
-    except Exception as e:
-        logger.error(f"Error creating course: {str(e)}")
-        return (
-            f"Error: {str(e)}",
-            "",
-            "",
-            False,
-            False
-        )
-
-async def submit_answer(answer: str) -> Tuple[str, str, str, bool, bool]:
-    """Submit an answer for evaluation"""
-    if not state.course:
-        return (
-            "No active course. Please create a course first.",
-            "",
-            "",
-            False,
-            False
-        )
-    
-    try:
-        current_module = state.course["modules"][state.current_module_idx]
-        current_session = current_module["sessions"][state.current_session_idx]
-        current_question = current_session["assessment"]["questions"][state.current_question_idx]
-        
-        # Evaluate answer (implement your evaluation logic here)
-        is_correct = evaluate_answer(answer, current_question)
-        
-        feedback = "Correct! " if is_correct else "Incorrect. "
-        feedback += current_question["explanation"]
-        
-        # Show next question or next session button
-        state.current_question_idx += 1
-        show_next = state.current_question_idx >= len(current_session["assessment"]["questions"])
-        
-        return (
-            "Answer submitted",  # status
-            feedback,           # feedback
-            "",                # clear answer input
-            not show_next,     # submit button visibility
-            show_next          # next button visibility
-        )
-    except Exception as e:
-        logger.error(f"Error submitting answer: {str(e)}")
-        return (
-            f"Error: {str(e)}",
-            "",
-            "",
-            False,
-            False
-        )
-
-def evaluate_answer(answer: str, question: Any) -> bool:
-    """Evaluate if the answer is correct"""
-    # Implement your answer evaluation logic here
-    # For now, just check if the answer contains any of the correct answers
-    return any(correct.lower() in answer.lower() for correct in question["correct_answers"])
-
-async def next_session() -> Tuple[str, str, str, bool, bool, str]:
-    """Move to the next session"""
-    if not state.course:
-        return (
-            "No active course. Please create a course first.",
-            "",
-            "",
-            False,
-            False,
-            ""
-        )
-    
-    try:
-        current_module = state.course["modules"][state.current_module_idx]
-        
-        # Move to next session or module
-        state.current_session_idx += 1
-        if state.current_session_idx >= len(current_module["sessions"]):
-            state.current_module_idx += 1
-            state.current_session_idx = 0
-            
-            if state.current_module_idx >= len(state.course["modules"]):
-                return (
-                    "Course completed! ",
-                    "Congratulations! You have completed all sessions in this course.",
-                    "",
-                    False,
-                    False,
-                    ""
-                )
-        
-        # Get new session content
-        current_module = state.course["modules"][state.current_module_idx]
-        current_session = current_module["sessions"][state.current_session_idx]
-        state.current_question_idx = 0
-        state.show_assessment = False
-        
-        # Format the session content
-        content = f"""# {current_module['title']} - Session {state.current_session_idx + 1}
-
-{current_session.get('title', '')}
-
-{current_session.get('description', '')}
-
-Learning Objectives:
-{chr(10).join('- ' + obj for obj in current_session.get('objectives', []))}
-
-Duration: {current_session.get('duration', '45 minutes')}
+Duration: {session.get('duration', '45 minutes')}
 
 Content:
-{current_session.get('content', '')}
+{session.get('content', '')}
 """
-        
-        return (
-            f"Module {state.current_module_idx + 1}, Session {state.current_session_idx + 1}",
-            content,
-            "",
-            True,
-            True,
-            ""
-        )
-    except Exception as e:
-        logger.error(f"Error moving to next session: {str(e)}")
-        return (
-            f"Error: {str(e)}",
-            "",
-            "",
-            False,
-            False,
-            ""
-        )
 
-async def show_assessment() -> Tuple[str, str, bool, bool]:
-    """Show the assessment for the current session"""
-    if not state.course:
-        return (
-            "No active course. Please create a course first.",
-            "",
-            False,
-            False
-        )
+def format_assessment(session: Dict[str, Any]) -> str:
+    """Format assessment questions"""
+    if not session.get('assessment'):
+        return "No assessment available for this session."
     
-    try:
-        current_module = state.course["modules"][state.current_module_idx]
-        current_session = current_module["sessions"][state.current_session_idx]
-        current_question = current_session["assessment"]["questions"][state.current_question_idx]
-        
-        state.show_assessment = True
-        
-        return (
-            "Assessment started",
-            current_question["text"],
-            True,   # show answer input
-            True    # show submit button
-        )
-    except Exception as e:
-        logger.error(f"Error showing assessment: {str(e)}")
-        return (
-            f"Error: {str(e)}",
-            "",
-            False,
-            False
-        )
+    questions = session['assessment'].get('questions', [])
+    if not questions:
+        return "No questions available for this assessment."
+    
+    current_q = questions[state.current_question_idx]
+    return f"""# Assessment Question {state.current_question_idx + 1}/{len(questions)}
+
+{current_q.get('text', '')}
+"""
 
 async def generate_with_status(topic: str, language: str) -> AsyncGenerator[Dict[str, Any], None]:
     """Generate course content with status updates"""
     try:
         async for update in generate_course(topic, language):
-            if "status" in update:
+            if isinstance(update, dict):
+                if "status" in update:
+                    yield {
+                        "status": update["status"],
+                        "progress": update.get("progress", 0),
+                        "course_state": update.get("course_state", None),
+                        "error": None
+                    }
+                elif "error" in update:
+                    yield {
+                        "status": "Error",
+                        "progress": 0,
+                        "course_state": None,
+                        "error": update["error"]
+                    }
+            else:
+                # If update is the final course state
                 yield {
-                    "status": update["status"],
-                    "progress": update.get("progress", 0),
-                    "content": "",
+                    "status": "Course generation complete",
+                    "progress": 100,
+                    "course_state": update,
                     "error": None
                 }
-            
-            if "error" in update:
-                yield {
-                    "status": "Error",
-                    "progress": 0,
-                    "content": "",
-                    "error": update["error"]
-                }
-        
     except Exception as e:
         logger.error(f"Error in generate_with_status: {str(e)}")
         yield {
             "status": "Error",
             "progress": 0,
-            "content": "",
+            "course_state": None,
             "error": str(e)
         }
 
@@ -277,14 +108,28 @@ async def on_generate(topic: str, language: str = "English") -> AsyncGenerator[T
                 )
                 return
             
-            # If we have a course state, try to display the first session
-            if "course_state" in update:
-                state.course = update["course_state"]
-                if state.course and state.course.get("modules"):
-                    current_module = state.course["modules"][0]
-                    if current_module.get("sessions"):
-                        current_session = current_module["sessions"][0]
-                        content = format_session_content(current_module, current_session, 1)
+            # Only save the course when it's complete
+            if progress == 100 and update.get("course_state"):
+                try:
+                    course_data = update["course_state"]
+                    if isinstance(course_data, dict) and course_data.get("modules"):
+                        state.course = course_data
+                        # Save the course
+                        state.course_id = state.storage.save_course(state.course)
+                        # Initialize progress
+                        state.progress.create_new_progress(state.course_id)
+                        # Format first session
+                        current_module = state.course["modules"][0]
+                        if current_module.get("sessions"):
+                            current_session = current_module["sessions"][0]
+                            content = format_session_content(current_module, current_session, 1)
+                except Exception as e:
+                    logger.error(f"Error saving course: {str(e)}")
+                    yield (
+                        f"Error saving course: {str(e)}",
+                        ""
+                    )
+                    return
             
             yield (
                 status_text,
@@ -298,22 +143,183 @@ async def on_generate(topic: str, language: str = "English") -> AsyncGenerator[T
             ""
         )
 
-def format_session_content(module: Dict[str, Any], session: Dict[str, Any], session_num: int) -> str:
-    """Format session content for display"""
-    return f"""# {module['title']} - Session {session_num}
+async def load_course(course_id: str) -> Tuple[str, str, bool, bool]:
+    """Load an existing course"""
+    try:
+        # Load course data
+        course_data = state.storage.load_course(course_id)
+        if not course_data:
+            return "Error: Course not found", "", False, False
+        
+        # Set course state
+        state.course = course_data
+        state.course_id = course_id
+        
+        # Load progress
+        progress_data = state.progress.load_progress(course_id)
+        state.current_module_idx = progress_data['current_module']
+        state.current_session_idx = progress_data['current_session']
+        
+        # Get current session content
+        current_module = state.course["modules"][state.current_module_idx]
+        current_session = current_module["sessions"][state.current_session_idx]
+        content = format_session_content(current_module, current_session, state.current_session_idx + 1)
+        
+        return (
+            f"Loaded course: {state.course['topic']}",
+            content,
+            True,  # Show submit button
+            True   # Show next button
+        )
+        
+    except Exception as e:
+        logger.error(f"Error loading course: {str(e)}")
+        return f"Error loading course: {str(e)}", "", False, False
 
-{session.get('title', '')}
+async def submit_answer(answer: str) -> Tuple[str, str, str, bool, bool]:
+    """Submit an answer for evaluation"""
+    if not state.course:
+        return (
+            "No active course",
+            "",
+            "",
+            False,
+            False
+        )
+    
+    try:
+        current_module = state.course["modules"][state.current_module_idx]
+        current_session = current_module["sessions"][state.current_session_idx]
+        
+        if not state.show_assessment:
+            # Show first assessment question
+            state.show_assessment = True
+            state.current_question_idx = 0
+            return (
+                "Starting assessment",
+                format_assessment(current_session),
+                "",
+                True,
+                False
+            )
+        
+        # Evaluate answer
+        questions = current_session['assessment']['questions']
+        current_question = questions[state.current_question_idx]
+        is_correct = evaluate_answer(answer, current_question)
+        
+        feedback = "Correct! " if is_correct else "Incorrect. "
+        feedback += current_question.get('explanation', '')
+        
+        # Move to next question or complete assessment
+        state.current_question_idx += 1
+        if state.current_question_idx >= len(questions):
+            # Complete session
+            state.progress.update_session_progress(
+                state.course_id,
+                state.current_module_idx,
+                state.current_session_idx,
+                completed=True,
+                score=0.0  # TODO: Calculate actual score
+            )
+            return (
+                "Assessment completed!",
+                feedback + "\n\nClick 'Next Session' to continue.",
+                "",
+                False,
+                True
+            )
+        
+        # Show next question
+        return (
+            feedback,
+            format_assessment(current_session),
+            "",
+            True,
+            False
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in submit_answer: {str(e)}")
+        return (
+            f"Error: {str(e)}",
+            "",
+            "",
+            False,
+            False
+        )
 
-{session.get('description', '')}
+def evaluate_answer(answer: str, question: Dict[str, Any]) -> bool:
+    """Evaluate if the answer is correct"""
+    correct_answers = question.get('correct_answers', [])
+    if not correct_answers:
+        return False
+    
+    # Simple string matching for now
+    answer = answer.lower().strip()
+    return any(correct.lower().strip() in answer for correct in correct_answers)
 
-Learning Objectives:
-{chr(10).join('- ' + obj for obj in session.get('objectives', []))}
-
-Duration: {session.get('duration', '45 minutes')}
-
-Content:
-{session.get('content', '')}
-"""
+async def next_session() -> Tuple[str, str, str, bool, bool]:
+    """Move to the next session"""
+    if not state.course:
+        return (
+            "No active course",
+            "",
+            "",
+            False,
+            False
+        )
+    
+    try:
+        current_module = state.course["modules"][state.current_module_idx]
+        
+        # Move to next session or module
+        state.current_session_idx += 1
+        if state.current_session_idx >= len(current_module["sessions"]):
+            state.current_module_idx += 1
+            state.current_session_idx = 0
+            
+            if state.current_module_idx >= len(state.course["modules"]):
+                return (
+                    "Course completed!",
+                    "Congratulations! You have completed all sessions in this course.",
+                    "",
+                    False,
+                    False
+                )
+        
+        # Get new session content
+        current_module = state.course["modules"][state.current_module_idx]
+        current_session = current_module["sessions"][state.current_session_idx]
+        state.current_question_idx = 0
+        state.show_assessment = False
+        
+        # Update progress
+        state.progress.update_session_progress(
+            state.course_id,
+            state.current_module_idx,
+            state.current_session_idx
+        )
+        
+        content = format_session_content(current_module, current_session, state.current_session_idx + 1)
+        
+        return (
+            f"Module {state.current_module_idx + 1}, Session {state.current_session_idx + 1}",
+            content,
+            "",
+            True,
+            True
+        )
+        
+    except Exception as e:
+        logger.error(f"Error moving to next session: {str(e)}")
+        return (
+            f"Error: {str(e)}",
+            "",
+            "",
+            False,
+            False
+        )
 
 def create_interface():
     """Create the Gradio interface with improved status display"""
@@ -323,24 +329,48 @@ def create_interface():
         Generate personalized educational content with AI assistance.
         """)
         
-        with gr.Row():
-            with gr.Column():
-                topic_input = gr.Textbox(
-                    label="Course Topic",
-                    placeholder="Enter the topic you want to learn about..."
-                )
-                language_input = gr.Dropdown(
-                    choices=["English", "Español", "Português", "Français"],
-                    value="English",
-                    label="Language"
-                )
-                generate_btn = gr.Button("Generate Course", variant="primary")
+        with gr.Tab("Generate New Course"):
+            with gr.Row():
+                with gr.Column():
+                    topic_input = gr.Textbox(
+                        label="Course Topic",
+                        placeholder="Enter the topic you want to learn about..."
+                    )
+                    language_input = gr.Dropdown(
+                        choices=["English", "Español", "Português", "Français"],
+                        value="English",
+                        label="Language"
+                    )
+                    generate_btn = gr.Button("Generate Course", variant="primary")
+        
+        with gr.Tab("Load Existing Course"):
+            def get_course_choices():
+                courses = state.storage.list_courses()
+                return [(k, f"{v['topic']} ({v['language']})") for k, v in courses.items()]
             
-            with gr.Column():
-                status_output = gr.Textbox(
-                    label="Status",
-                    interactive=False
-                )
+            courses_dropdown = gr.Dropdown(
+                label="Select a Course",
+                choices=get_course_choices(),
+                type="value",
+                value=None,
+                interactive=True
+            )
+            load_btn = gr.Button("Load Course")
+            
+            # Refresh course list when tab is selected
+            def refresh_courses():
+                return gr.Dropdown(choices=get_course_choices())
+            
+            courses_dropdown.change(
+                fn=refresh_courses,
+                inputs=[],
+                outputs=[courses_dropdown]
+            )
+        
+        status_output = gr.Textbox(
+            label="Status",
+            interactive=False
+        )
         
         content_output = gr.Markdown(
             label="Course Content",
@@ -361,6 +391,12 @@ def create_interface():
             fn=on_generate,
             inputs=[topic_input, language_input],
             outputs=[status_output, content_output]
+        )
+        
+        load_btn.click(
+            fn=load_course,
+            inputs=[courses_dropdown],
+            outputs=[status_output, content_output, submit_btn, next_btn]
         )
         
         submit_btn.click(
